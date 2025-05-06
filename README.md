@@ -130,9 +130,10 @@ realestate-app/
 
 **requirements.txt**
 ```
+# requirements.txt
 streamlit==1.31.0
-pandas==2.1.1
-numpy==1.24.3
+pandas==2.0.3
+numpy==1.26.0
 matplotlib==3.7.2
 seaborn==0.12.2
 plotly==5.18.0
@@ -140,6 +141,7 @@ japanize-matplotlib==1.1.3
 scikit-learn==1.3.0
 xlsxwriter==3.1.2
 requests==2.31.0
+setuptools>=65.5.0
 ```
 
 **.streamlit/config.toml**
