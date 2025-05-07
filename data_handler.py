@@ -124,22 +124,31 @@ def preprocess_data(df):
             st.write(f"使用可能なカラム: {available_columns}")
         df_pic = df[available_columns]
         
-        # 数値型への変換 - より多くのカラムを対象に
-        numeric_columns = ['TradePrice', 'Area', 'BuildingYear', 'BuildingAge']
+        # BuildingYearの前処理（「年」を取り除く）
+        if 'BuildingYear' in df_pic.columns:
+            if debug_mode:
+                st.write("BuildingYear変換前の例：", df_pic['BuildingYear'].head().tolist())
+            # 年の文字を削除し数字のみを抽出
+            df_pic['BuildingYear'] = df_pic['BuildingYear'].astype(str).str.replace('年', '').str.replace(r'[^\d.]', '', regex=True)
+            if debug_mode:
+                st.write("文字列処理後：", df_pic['BuildingYear'].head().tolist())
+        
+        # 数値型への変換
+        numeric_columns = ['TradePrice', 'Area', 'BuildingYear']
         for col in numeric_columns:
             if col in df_pic.columns:
                 df_pic.loc[:, col] = pd.to_numeric(df_pic[col], errors='coerce')
-
-        # 追加の数値特徴量を作成
-        if 'TradePrice' in df_pic.columns and 'Area' in df_pic.columns:
-            mask = (df_pic['Area'] > 0) & df_pic['TradePrice'].notna()
-            df_pic.loc[mask, 'PricePerSquareMeter'] = df_pic.loc[mask, 'TradePrice'] / df_pic.loc[mask, 'Area']
+                if debug_mode and col == 'BuildingYear':
+                    st.write("数値変換後：", df_pic['BuildingYear'].head().tolist())
+                    st.write("データ型：", df_pic['BuildingYear'].dtype)
         
         # 築年数の計算
         if 'BuildingYear' in df_pic.columns:
             import datetime
             current_year = datetime.datetime.now().year
             df_pic['BuildingAge'] = current_year - df_pic['BuildingYear']
+            if debug_mode:
+                st.write("築年数計算後：", df_pic['BuildingAge'].head().tolist())
         
         # 平米あたりの価格計算
         if 'TradePrice' in df_pic.columns and 'Area' in df_pic.columns:
@@ -170,6 +179,14 @@ def preprocess_data(df):
         if debug_mode:
             st.success("データの前処理が完了しました")
         return df_pic
+    
+    except Exception as e:
+        st.error(f"データの前処理中にエラーが発生しました: {str(e)}")
+        if debug_mode:
+            import traceback
+            st.write(traceback.format_exc())
+        # エラーが発生しても、元のデータを返す
+        return df
     
     except Exception as e:
         st.error(f"データの前処理中にエラーが発生しました: {str(e)}")

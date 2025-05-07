@@ -36,3 +36,6 @@ ENV/
 # OS specific
 .DS_Store
 Thumbs.db
+
+my_requirements.txt
+README.md
