@@ -132,6 +132,7 @@ def preprocess_data(df):
             df_pic['BuildingYear'] = df_pic['BuildingYear'].astype(str).str.replace('年', '').str.replace(r'[^\d.]', '', regex=True)
             if debug_mode:
                 st.write("文字列処理後：", df_pic['BuildingYear'].head().tolist())
+                
         
         # 数値型への変換
         numeric_columns = ['TradePrice', 'Area', 'BuildingYear']
