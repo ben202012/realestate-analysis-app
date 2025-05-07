@@ -37,6 +37,14 @@ st.set_page_config(
 if 'current_tab' not in st.session_state:
     st.session_state['current_tab'] = 0  # デフォルトタブのインデックス
 
+# 検索条件の以前の値を保存するための状態変数
+if 'previous_year' not in st.session_state:
+    st.session_state['previous_year'] = None
+if 'previous_prefecture' not in st.session_state:
+    st.session_state['previous_prefecture'] = None
+if 'previous_city' not in st.session_state:
+    st.session_state['previous_city'] = None
+
 # アプリのタイトルと説明
 st.title('不動産取引価格分析アプリ')
 st.write('国土交通省APIから取得した不動産取引データを分析・可視化するアプリケーションです')
@@ -48,7 +56,8 @@ st.sidebar.header('検索条件')
 year = st.sidebar.selectbox(
     '年度',
     options=['2024', '2023', '2022', '2021', '2020', '2019'],
-    index=0  # 2024年をデフォルト選択
+    index=0,  # 2024年をデフォルト選択
+    key='year_select'  # キーを追加
 )
 
 # 都道府県選択
@@ -57,7 +66,8 @@ prefecture_code = st.sidebar.selectbox(
     '都道府県',
     options=list(prefecture_dict.keys()),
     format_func=lambda x: prefecture_dict[x],
-    index=list(prefecture_dict.keys()).index(27)  # 大阪府をデフォルト選択
+    index=list(prefecture_dict.keys()).index(27),  # 大阪府をデフォルト選択
+    key='prefecture_select'  # キーを追加
 )
 
 # APIキー入力
@@ -77,7 +87,8 @@ if api_key:
                     '市区町村',
                     options=[opt[0] for opt in city_options],
                     format_func=lambda x: dict(city_options)[x],
-                    index=0
+                    index=0,
+                    key='city_select'  # キーを追加
                 )
             else:
                 # API取得に失敗した場合、旧方式で表示
@@ -86,7 +97,8 @@ if api_key:
                     '市区町村',
                     options=[opt[0] for opt in city_options],
                     format_func=lambda x: dict(city_options)[x],
-                    index=0
+                    index=0,
+                    key='city_select'  # キーを追加
                 )
                 st.warning("APIから市区町村リストを取得できなかったため、一部の市区町村のみ表示しています。")
 else:
@@ -96,8 +108,47 @@ else:
         '市区町村',
         options=[opt[0] for opt in city_options],
         format_func=lambda x: dict(city_options)[x],
-        index=0
+        index=0,
+        key='city_select'  # キーを追加
     )
+
+# 検索条件変更時にデータをリセットする処理
+# 市区町村選択の変更検出を修正
+conditions_changed = False
+
+# 年度が変更されたか確認
+if st.session_state['previous_year'] is not None and st.session_state['previous_year'] != year:
+    conditions_changed = True
+    if st.session_state.get('debug_mode', False):
+        st.sidebar.info(f"年度が変更されました: {st.session_state['previous_year']} → {year}")
+st.session_state['previous_year'] = year
+
+# 都道府県が変更されたか確認
+if st.session_state['previous_prefecture'] is not None and st.session_state['previous_prefecture'] != prefecture_code:
+    conditions_changed = True
+    if st.session_state.get('debug_mode', False):
+        st.sidebar.info(f"都道府県が変更されました: {st.session_state['previous_prefecture']} → {prefecture_code}")
+st.session_state['previous_prefecture'] = prefecture_code
+
+# 市区町村が変更されたか確認
+# ここでセッション変数を使用して比較
+if 'city_select' in st.session_state:
+    current_city = st.session_state['city_select']
+    if st.session_state['previous_city'] is not None and st.session_state['previous_city'] != current_city:
+        conditions_changed = True
+        if st.session_state.get('debug_mode', False):
+            st.sidebar.info(f"市区町村が変更されました: {st.session_state['previous_city']} → {current_city}")
+    st.session_state['previous_city'] = current_city
+
+# 条件が変更されていて、データがセッションに存在する場合、データをリセット
+if conditions_changed and 'data' in st.session_state:
+    del st.session_state['data']
+    # モデル関連のセッションデータもリセット
+    for key in ['prediction_model', 'model_features', 'model_r2', 'model_mse', 'model_rmse', 'prediction_result']:
+        if key in st.session_state:
+            del st.session_state[key]
+    # リセットメッセージを表示
+    st.warning('検索条件が変更されたため、データがリセットされました。新しい条件でデータを取得してください。')
 
 # データ取得ボタン
 if st.sidebar.button('データ取得'):
