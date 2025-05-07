@@ -17,6 +17,14 @@ from visualizers import (
 from models import train_price_prediction_model, show_feature_importance, predict_price
 from utils import get_prefecture_dict, get_city_options, format_price, filter_dataframe, generate_summary_report
 
+# タブ選択の状態を保持するための関数
+def train_model_on_click(df, features):
+    with st.spinner('モデルを構築中...'):
+        model, mse, r2 = train_price_prediction_model(df, features)
+        if model is not None:
+            st.session_state['model_r2'] = r2
+            st.session_state['model_mse'] = mse
+
 # ページ設定
 st.set_page_config(
     page_title="不動産取引価格分析アプリ",
@@ -24,6 +32,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# セッション状態の初期化
+if 'current_tab' not in st.session_state:
+    st.session_state['current_tab'] = 0  # デフォルトタブのインデックス
 
 # アプリのタイトルと説明
 st.title('不動産取引価格分析アプリ')
@@ -108,6 +120,15 @@ if st.sidebar.button('データ取得'):
     else:
         st.sidebar.error('APIキーを入力してください')
 
+# サイドバー - 開発者モード
+st.sidebar.header('開発者オプション')
+# セッション状態にデバッグモードが存在しない場合は初期化
+if 'debug_mode' not in st.session_state:
+    st.session_state['debug_mode'] = False
+# チェックボックスの値をセッション状態に反映
+debug_mode = st.sidebar.checkbox('デバッグモードを有効にする', value=st.session_state['debug_mode'])
+st.session_state['debug_mode'] = debug_mode
+
 # サイドバー - フィルタリング
 st.sidebar.header('データフィルタリング')
 if 'data' in st.session_state:
@@ -123,7 +144,6 @@ if 'data' in st.session_state:
     
     # 価格範囲フィルタ
     if 'TradePrice' in df.columns and not df['TradePrice'].isna().all():
-        df['TradePrice'] = pd.to_numeric(df['TradePrice'], errors='coerce')
         price_min = float(df['TradePrice'].min()) if not pd.isna(df['TradePrice'].min()) else 0.0
         price_max = float(df['TradePrice'].max()) if not pd.isna(df['TradePrice'].max()) else 1000000.0
         # 最小値と最大値が同じ場合、最大値を少し増やす
@@ -175,7 +195,7 @@ with st.sidebar.expander("ヘルプと使い方"):
        - **基本統計**: 基本的な統計情報とデータテーブル
        - **価格分析**: 価格分布、物件タイプ別価格、築年数と価格の関係
        - **エリア分析**: 地区別の平均価格と件数
-       - **高度な分析**: 相関分析、時系列トレンド、平米単価分析
+       - **高度な分析**: 相関分析、時系列分析など
        - **価格予測**: 機械学習モデルによる価格予測
     
     4. **データのダウンロードと要約レポート**
@@ -192,22 +212,15 @@ with st.sidebar.expander("ヘルプと使い方"):
     ご質問やフィードバックは[こちら](mailto:your.email@example.com)までお願いします。
     """)
 
-# サイドバー - 開発者モード
-st.sidebar.header('開発者オプション')
-# セッション状態にデバッグモードが存在しない場合は初期化
-if 'debug_mode' not in st.session_state:
-    st.session_state['debug_mode'] = False
-# チェックボックスの値をセッション状態に反映
-debug_mode = st.sidebar.checkbox('デバッグモードを有効にする', value=st.session_state['debug_mode'])
-st.session_state['debug_mode'] = debug_mode
-
-
 # メインコンテンツ
 if 'data' in st.session_state and filtered_df is not None:
     # タブの設定
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(['基本統計', '価格分析', 'エリア分析', '高度な分析', '価格予測'])
-    
-    with tab1:
+    tab_names = ['基本統計', '価格分析', 'エリア分析', '高度な分析', '価格予測']
+    selected_tab = st.radio("分析タブ", tab_names, index=st.session_state['current_tab'], horizontal=True, label_visibility="collapsed")
+    st.session_state['current_tab'] = tab_names.index(selected_tab)
+
+    # 選択したタブに応じてコンテンツを表示
+    if selected_tab == '基本統計':
         st.header('基本統計情報')
         
         # 基本統計情報表示
@@ -216,8 +229,8 @@ if 'data' in st.session_state and filtered_df is not None:
         # データテーブル表示
         with st.expander('データテーブル表示'):
             st.dataframe(filtered_df)
-    
-    with tab2:
+
+    elif selected_tab == '価格分析':
         st.header('価格分析')
         
         # 価格分布ヒストグラム
@@ -231,8 +244,8 @@ if 'data' in st.session_state and filtered_df is not None:
         
         # 築年数と価格の関係
         plot_price_vs_building_age(filtered_df)
-    
-    with tab3:
+
+    elif selected_tab == 'エリア分析':
         st.header('エリア分析')
         
         # 地区別の平均価格
@@ -250,15 +263,10 @@ if 'data' in st.session_state and filtered_df is not None:
                 title='地区別の物件数（上位10地区）'
             )
             st.plotly_chart(fig, use_container_width=True)
-    
-    with tab4:
+
+    elif selected_tab == '高度な分析':
         st.header('高度な分析')
         
-        # データ型の確認（デバッグモード時のみ）
-        if st.session_state.get('debug_mode', False):
-            st.subheader('データ型情報')
-            st.write(filtered_df.dtypes)
-    
         # 相関分析
         st.subheader('相関分析')
         plot_heatmap(filtered_df)
@@ -286,99 +294,33 @@ if 'data' in st.session_state and filtered_df is not None:
                 labels={'Structure': '構造', 'mean': '平均価格（円）', 'count': '件数'}
             )
             st.plotly_chart(fig, use_container_width=True)
-    
-    with tab5:
+
+    elif selected_tab == '価格予測':
         st.header('価格予測モデル')
         st.write('機械学習を使った簡易的な価格予測モデルを構築します。')
         
         # 特徴量選択
-        available_features = ['Area', 'BuildingAge']
+        available_features = ['Area', 'BuildingAge', 'Type', 'Renovation']
         selected_features = st.multiselect(
             '使用する特徴量を選択',
             options=[f for f in available_features if f in filtered_df.columns],
-            default=[f for f in ['Area', 'BuildingAge'] if f in filtered_df.columns]
+            default=[f for f in ['Area', 'BuildingAge', 'Type'] if f in filtered_df.columns]
         )
         
-        if st.button('モデル構築') and len(selected_features) > 0:
-            with st.spinner('モデルを構築中...'):
-                model, mse, r2 = train_price_prediction_model(filtered_df, selected_features)
-                
-                if model is not None:
-                    st.session_state['model'] = model
-                    st.session_state['model_features'] = selected_features
-                    
-                    # モデル評価指標の表示
-                    col1, col2 = st.columns(2)
-                    col1.metric("決定係数 (R²)", f"{r2:.3f}")
-                    col2.metric("平均二乗誤差 (MSE)", f"{mse:.1f}")
-                    
-                    # 特徴量の重要度
-                    importance_df = show_feature_importance(model, selected_features)
-                    
-                    # 予測フォーム
-                    st.subheader("価格予測")
-                    st.write("特徴量の値を入力して物件価格を予測します")
-                    
-                    # 入力フォームの作成
-                    input_features = {}
-                    cols = st.columns(len(selected_features))
-                    
-                    for i, feature in enumerate(selected_features):
-                        # 特徴量ごとの適切な入力範囲を設定
-                        if feature == 'Area':
-                            input_features[feature] = cols[i].number_input(
-                                "面積 (m²)",
-                                min_value=10.0,
-                                max_value=500.0,
-                                value=70.0,
-                                step=5.0
-                            )
-                        elif feature == 'BuildingAge':
-                            input_features[feature] = cols[i].number_input(
-                                "築年数 (年)",
-                                min_value=0,
-                                max_value=50,
-                                value=15,
-                                step=1
-                            )
-                        else:
-                            # その他の特徴量の場合
-                            min_val = float(filtered_df[feature].min())
-                            max_val = float(filtered_df[feature].max())
-                            input_features[feature] = cols[i].number_input(
-                                feature,
-                                min_value=min_val,
-                                max_value=max_val,
-                                value=(min_val + max_val) / 2
-                            )
-                    
-                    if st.button('予測実行'):
-                        predicted_price = predict_price(model, input_features, selected_features)
-                        if predicted_price is not None:
-                            st.success(f"予測価格: {format_price(predicted_price)}")
-                            
-                            # 信頼区間（簡易的なもの）
-                            lower_bound = predicted_price * 0.8
-                            upper_bound = predicted_price * 1.2
-                            st.write(f"予測範囲: {format_price(lower_bound)} 〜 {format_price(upper_bound)}")
-                            
-                            # 予測結果の解釈
-                            st.write("### 予測価格の解釈")
-                            
-                            # 特徴量の影響度の説明
-                            if 'Area' in selected_features and 'BuildingAge' in selected_features:
-                                area_influence = "面積が広いほど価格は高くなり、"
-                                age_influence = "築年数が古いほど価格は低くなる"
-                                st.write(f"一般的に、{area_influence}{age_influence}傾向があります。")
-                            
-                            # 平均価格との比較
-                            avg_price = filtered_df['TradePrice'].mean()
-                            if predicted_price > avg_price * 1.2:
-                                st.write(f"予測価格は平均価格（{format_price(avg_price)}）より**高い**値となっています。")
-                            elif predicted_price < avg_price * 0.8:
-                                st.write(f"予測価格は平均価格（{format_price(avg_price)}）より**低い**値となっています。")
-                            else:
-                                st.write(f"予測価格は平均価格（{format_price(avg_price)}）と**同程度**の値となっています。")
+        # フォームを使用してモデル構築ボタンをグループ化
+        with st.form(key='model_build_form'):
+            submit_build = st.form_submit_button('モデル構築')
+            
+        if submit_build and len(selected_features) > 0:
+            train_model_on_click(filtered_df, selected_features)
+        
+        # 特徴量の重要度
+        if 'prediction_model' in st.session_state and 'model_features' in st.session_state:
+            show_feature_importance(st.session_state['prediction_model'], st.session_state['model_features'])
+        
+        # 予測フォームと結果の表示
+        from models import show_prediction_form_and_results
+        show_prediction_form_and_results(filtered_df)
 
     # データのダウンロード機能
     st.header('データのダウンロード')

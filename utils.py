@@ -54,11 +54,9 @@ def get_city_options(prefecture_code):
         return [(prefecture_code * 1000 + 1, 'サンプル市')]
 
 def format_price(price):
-    """価格を見やすい形式にフォーマット"""
-    if price >= 10000:
-        return f"{price/10000:.2f}億円"
-    else:
-        return f"{price:.0f}万円"
+    """価格を見やすい形式にフォーマット（万円単位）"""
+    price_man = price / 10000  # 円から万円に変換
+    return f"{price_man:,.1f}万円"
 
 def filter_dataframe(df, filters):
     """条件によるデータのフィルタリング"""
@@ -143,7 +141,7 @@ def generate_summary_report(df):
     # 基本情報
     report = "# 不動産取引データ 要約レポート\n\n"
     report += f"## 基本情報\n"
-    report += f"- データ件数: {len(df)}件\n"
+    report += f"- データ件数: {len(df):,}件\n"
     
     if 'Prefecture' in df.columns:
         prefecture = df['Prefecture'].iloc[0] if not df['Prefecture'].isna().all() else "不明"
@@ -160,19 +158,42 @@ def generate_summary_report(df):
     # 価格統計
     if 'TradePrice' in df.columns:
         report += f"\n## 価格統計\n"
-        report += f"- 平均価格: {df['TradePrice'].mean():,.0f}円\n"
-        report += f"- 中央値: {df['TradePrice'].median():,.0f}円\n"
-        report += f"- 最小値: {df['TradePrice'].min():,.0f}円\n"
-        report += f"- 最大値: {df['TradePrice'].max():,.0f}円\n"
-        report += f"- 標準偏差: {df['TradePrice'].std():,.0f}円\n"
+        report += f"- 平均価格: {df['TradePrice'].mean()/10000:,.1f}万円\n"
+        report += f"- 中央値: {df['TradePrice'].median()/10000:,.1f}万円\n"
+        report += f"- 最小値: {df['TradePrice'].min()/10000:,.1f}万円\n"
+        report += f"- 最大値: {df['TradePrice'].max()/10000:,.1f}万円\n"
+        report += f"- 標準偏差: {df['TradePrice'].std()/10000:,.1f}万円\n"
+        
+        # 四分位数も追加
+        report += f"- 第1四分位数 (25%): {df['TradePrice'].quantile(0.25)/10000:,.1f}万円\n"
+        report += f"- 第3四分位数 (75%): {df['TradePrice'].quantile(0.75)/10000:,.1f}万円\n"
     
     # 物件タイプ別の分布
     if 'Type' in df.columns:
         report += f"\n## 物件タイプ別の分布\n"
         type_counts = df['Type'].value_counts()
-        for type_name, count in type_counts.items():
-            percentage = 100 * count / len(df)
-            report += f"- {type_name}: {count}件 ({percentage:.1f}%)\n"
+        
+        # 物件タイプ別の価格統計も追加
+        if 'TradePrice' in df.columns:
+            report += "### 物件タイプ別の価格統計（万円）\n"
+            report += "| 物件タイプ | 件数 | 割合 | 平均価格 | 中央値 | 最小値 | 最大値 |\n"
+            report += "|------------|------|------|----------|--------|--------|--------|\n"
+            
+            for type_name, count in type_counts.items():
+                percentage = 100 * count / len(df)
+                type_df = df[df['Type'] == type_name]
+                
+                avg_price = type_df['TradePrice'].mean() / 10000
+                median_price = type_df['TradePrice'].median() / 10000
+                min_price = type_df['TradePrice'].min() / 10000
+                max_price = type_df['TradePrice'].max() / 10000
+                
+                report += f"| {type_name} | {count:,} | {percentage:.1f}% | {avg_price:,.1f} | {median_price:,.1f} | {min_price:,.1f} | {max_price:,.1f} |\n"
+        else:
+            # 物件タイプの単純な分布
+            for type_name, count in type_counts.items():
+                percentage = 100 * count / len(df)
+                report += f"- {type_name}: {count}件 ({percentage:.1f}%)\n"
     
     # 価格帯別の分布
     if 'PriceBin' in df.columns:
@@ -184,12 +205,25 @@ def generate_summary_report(df):
     
     # 地区別の平均価格（上位5地区）
     if 'DistrictName' in df.columns and 'TradePrice' in df.columns:
-        report += f"\n## 地区別の平均価格（上位5地区）\n"
-        district_price = df.groupby('DistrictName')['TradePrice'].agg(['mean', 'count']).reset_index()
-        district_price = district_price.sort_values('mean', ascending=False).head(5)
+        report += f"\n## 地区別の分析\n"
+        district_price = df.groupby('DistrictName')['TradePrice'].agg(['mean', 'count', 'median', 'min', 'max']).reset_index()
+        district_price = district_price.sort_values('mean', ascending=False)
         
-        for _, row in district_price.iterrows():
-            report += f"- {row['DistrictName']}: {row['mean']:,.0f}円 ({row['count']}件)\n"
+        report += "### 平均価格上位5地区（万円）\n"
+        report += "| 地区名 | 平均価格 | 中央値 | 最小値 | 最大値 | 件数 |\n"
+        report += "|--------|----------|--------|--------|--------|------|\n"
+        
+        for _, row in district_price.head(5).iterrows():
+            report += f"| {row['DistrictName']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} | {row['min']/10000:,.1f} | {row['max']/10000:,.1f} | {row['count']:,} |\n"
+        
+        # 平均価格下位5地区も追加
+        if len(district_price) > 10:
+            report += "\n### 平均価格下位5地区（万円）\n"
+            report += "| 地区名 | 平均価格 | 中央値 | 最小値 | 最大値 | 件数 |\n"
+            report += "|--------|----------|--------|--------|--------|------|\n"
+            
+            for _, row in district_price.tail(5).iterrows():
+                report += f"| {row['DistrictName']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} | {row['min']/10000:,.1f} | {row['max']/10000:,.1f} | {row['count']} |\n"
     
     # 築年数の統計（ある場合）
     if 'BuildingAge' in df.columns:
@@ -198,24 +232,127 @@ def generate_summary_report(df):
         report += f"- 中央値: {df['BuildingAge'].median():.1f}年\n"
         report += f"- 最小値: {df['BuildingAge'].min():.1f}年\n"
         report += f"- 最大値: {df['BuildingAge'].max():.1f}年\n"
+        
+        # 築年数別の価格分析も追加
+        if 'TradePrice' in df.columns:
+            # 築年数を5年ごとの区間に分類
+            df['AgeGroup'] = pd.cut(df['BuildingAge'], 
+                                   bins=[0, 5, 10, 15, 20, 25, 30, 100], 
+                                   labels=['0-5年', '6-10年', '11-15年', '16-20年', '21-25年', '26-30年', '31年以上'])
+            
+            report += "\n### 築年数別の価格統計（万円）\n"
+            report += "| 築年数 | 件数 | 平均価格 | 中央値 | 最小値 | 最大値 |\n"
+            report += "|--------|------|----------|--------|--------|--------|\n"
+            
+            age_stats = df.groupby('AgeGroup')['TradePrice'].agg(['count', 'mean', 'median', 'min', 'max']).reset_index()
+            
+            for _, row in age_stats.iterrows():
+                if not pd.isna(row['AgeGroup']):
+                    report += f"| {row['AgeGroup']} | {row['count']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} | {row['min']/10000:,.1f} | {row['max']/10000:,.1f} |\n"
     
-    # まとめ
+    # 改装状況別の統計（ある場合）
+    if 'Renovation' in df.columns and 'TradePrice' in df.columns:
+        # NaNや空白を「不明」に置き換え
+        df_renovation = df.copy()
+        df_renovation['Renovation'] = df_renovation['Renovation'].fillna('不明')
+        df_renovation.loc[df_renovation['Renovation'] == '', 'Renovation'] = '不明'
+        
+        renovation_stats = df_renovation.groupby('Renovation')['TradePrice'].agg(['count', 'mean', 'median']).reset_index()
+        
+        if len(renovation_stats) > 0:
+            report += f"\n## 改装状況別の価格統計\n"
+            report += "| 改装状況 | 件数 | 平均価格（万円） | 中央値（万円） |\n"
+            report += "|----------|------|-----------------|---------------|\n"
+            
+            for _, row in renovation_stats.iterrows():
+                report += f"| {row['Renovation']} | {row['count']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} |\n"
+    
+    # まとめ（より詳細なものに拡張）
     report += f"\n## まとめ\n"
+    
     # 平均価格のコメント
     avg_price = df['TradePrice'].mean() if 'TradePrice' in df.columns else 0
-    if avg_price < 2000000:
+    if avg_price < 30000000:  # 3000万円未満
         price_comment = "比較的手頃な価格帯"
-    elif avg_price < 5000000:
+    elif avg_price < 50000000:  # 3000万円〜5000万円
         price_comment = "中価格帯"
-    else:
+    else:  # 5000万円以上
         price_comment = "高価格帯"
     
-    report += f"対象エリアは{price_comment}の取引が中心です。"
+    # 地区による価格差
+    district_comment = ""
+    if 'DistrictName' in df.columns and 'TradePrice' in df.columns:
+        district_prices = df.groupby('DistrictName')['TradePrice'].mean()
+        if len(district_prices) > 3:
+            max_district = district_prices.idxmax()
+            min_district = district_prices.idxmin()
+            price_ratio = district_prices.max() / district_prices.min()
+            
+            if price_ratio > 2:
+                district_comment = f" 地区による価格差が大きく、最も高価な{max_district}と最も安価な{min_district}では約{price_ratio:.1f}倍の差があります。"
+            else:
+                district_comment = f" 地区による価格差はそれほど大きくなく、最も高価な{max_district}と最も安価な{min_district}でも約{price_ratio:.1f}倍の差にとどまっています。"
     
-    # 物件タイプのコメント
-    if 'Type' in df.columns and not df['Type'].isna().all():
+    # 築年数と価格の関係
+    age_comment = ""
+    if 'BuildingAge' in df.columns and 'TradePrice' in df.columns:
+        corr = df[['BuildingAge', 'TradePrice']].corr().iloc[0, 1]
+        
+        if corr < -0.5:
+            age_comment = f" 築年数と価格には強い負の相関（相関係数:{corr:.2f}）があり、新しい物件ほど価格が高い傾向が顕著です。"
+        elif corr < -0.2:
+            age_comment = f" 築年数と価格には弱い負の相関（相関係数:{corr:.2f}）があり、比較的新しい物件の方が価格が高い傾向にあります。"
+        else:
+            age_comment = f" この地域では築年数と価格の相関（相関係数:{corr:.2f}）が弱く、築年数以外の要因が価格に大きく影響していると考えられます。"
+    
+    # 物件タイプの分布
+    type_comment = ""
+    if 'Type' in df.columns:
         most_common_type = df['Type'].value_counts().index[0]
         type_percent = 100 * df['Type'].value_counts().iloc[0] / len(df)
-        report += f" 物件タイプは{most_common_type}が最も多く全体の{type_percent:.1f}%を占めています。"
+        
+        if type_percent > 70:
+            type_comment = f" 物件タイプは{most_common_type}が圧倒的に多く全体の{type_percent:.1f}%を占めています。"
+        elif type_percent > 50:
+            type_comment = f" 物件タイプは{most_common_type}が最も多く全体の{type_percent:.1f}%を占めています。"
+        else:
+            second_type = df['Type'].value_counts().index[1]
+            second_percent = 100 * df['Type'].value_counts().iloc[1] / len(df)
+            type_comment = f" 物件タイプは{most_common_type}が{type_percent:.1f}%、{second_type}が{second_percent:.1f}%と多様な構成になっています。"
+    
+    # 総合的なまとめ文
+    summary = f"対象エリア（{municipality if 'Municipality' in df.columns else ''}）は{price_comment}の取引が中心です。{type_comment}{district_comment}{age_comment}"
+    
+    # 改装状況に関するコメント（あれば）
+    if 'Renovation' in df.columns and 'TradePrice' in df.columns:
+        # NaNや空白を「不明」に置き換え
+        df_renovation = df.copy()
+        df_renovation['Renovation'] = df_renovation['Renovation'].fillna('不明')
+        df_renovation.loc[df_renovation['Renovation'] == '', 'Renovation'] = '不明'
+        
+        renovation_prices = df_renovation.groupby('Renovation')['TradePrice'].mean()
+        if len(renovation_prices) > 1 and '改装済' in renovation_prices and ('未改装' in renovation_prices or '不明' in renovation_prices):
+            # 「未改装」があれば「未改装」と比較、なければ「不明」と比較
+            compare_to = '未改装' if '未改装' in renovation_prices else '不明'
+            price_diff = renovation_prices['改装済'] / renovation_prices[compare_to] - 1
+            if price_diff > 0.2:
+                summary += f" また、改装済物件は{compare_to}物件と比較して約{price_diff*100:.0f}%高い価格で取引される傾向があります。"
+    
+    # 取引動向（期間データがある場合）
+    if 'Period' in df.columns and 'TradePrice' in df.columns and len(df['Period'].unique()) > 1:
+        period_trends = df.groupby('Period')['TradePrice'].mean().sort_index()
+        if len(period_trends) > 1:
+            first_period = period_trends.index[0]
+            last_period = period_trends.index[-1]
+            price_change = (period_trends.iloc[-1] / period_trends.iloc[0] - 1) * 100
+            
+            if abs(price_change) < 5:
+                summary += f" {first_period}から{last_period}にかけての価格変動は小さく、市場は比較的安定しています。"
+            elif price_change > 0:
+                summary += f" {first_period}から{last_period}にかけて平均価格は約{price_change:.1f}%上昇しており、上昇トレンドが見られます。"
+            else:
+                summary += f" {first_period}から{last_period}にかけて平均価格は約{abs(price_change):.1f}%下落しており、下落トレンドが見られます。"
+    
+    report += summary
     
     return report
