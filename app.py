@@ -16,6 +16,7 @@ from visualizers import (
 )
 from models import train_price_prediction_model, show_feature_importance, predict_price
 from utils import get_prefecture_dict, get_city_options, format_price, filter_dataframe, generate_summary_report
+from price_trends import show_quarterly_price_trends
 
 # タブ選択の状態を保持するための関数
 def train_model_on_click(df, features):
@@ -171,15 +172,6 @@ if st.sidebar.button('データ取得'):
     else:
         st.sidebar.error('APIキーを入力してください')
 
-# サイドバー - 開発者モード
-st.sidebar.header('開発者オプション')
-# セッション状態にデバッグモードが存在しない場合は初期化
-if 'debug_mode' not in st.session_state:
-    st.session_state['debug_mode'] = False
-# チェックボックスの値をセッション状態に反映
-debug_mode = st.sidebar.checkbox('デバッグモードを有効にする', value=st.session_state['debug_mode'])
-st.session_state['debug_mode'] = debug_mode
-
 # サイドバー - フィルタリング
 st.sidebar.header('データフィルタリング')
 if 'data' in st.session_state:
@@ -229,6 +221,15 @@ if 'data' in st.session_state:
 else:
     filtered_df = None
 
+# サイドバー - 開発者モード (最後に移動)
+st.sidebar.header('開発者オプション')
+# セッション状態にデバッグモードが存在しない場合は初期化
+if 'debug_mode' not in st.session_state:
+    st.session_state['debug_mode'] = False
+# チェックボックスの値をセッション状態に反映
+debug_mode = st.sidebar.checkbox('デバッグモードを有効にする', value=st.session_state['debug_mode'])
+st.session_state['debug_mode'] = debug_mode
+
 # サイドバー - ヘルプと使い方
 with st.sidebar.expander("ヘルプと使い方"):
     st.markdown("""
@@ -248,6 +249,7 @@ with st.sidebar.expander("ヘルプと使い方"):
        - **エリア分析**: 地区別の平均価格と件数
        - **高度な分析**: 相関分析、時系列分析など
        - **価格予測**: 機械学習モデルによる価格予測
+       - **四半期推移**: 四半期ごとの価格推移分析
     
     4. **データのダウンロードと要約レポート**
        - CSVまたはExcel形式でデータをダウンロード
@@ -266,7 +268,7 @@ with st.sidebar.expander("ヘルプと使い方"):
 # メインコンテンツ
 if 'data' in st.session_state and filtered_df is not None:
     # タブの設定
-    tab_names = ['基本統計', '価格分析', 'エリア分析', '高度な分析', '価格予測']
+    tab_names = ['基本統計', '価格分析', 'エリア分析', '高度な分析', '価格予測', '四半期推移']
     selected_tab = st.radio("分析タブ", tab_names, index=st.session_state['current_tab'], horizontal=True, label_visibility="collapsed")
     st.session_state['current_tab'] = tab_names.index(selected_tab)
 
@@ -372,7 +374,10 @@ if 'data' in st.session_state and filtered_df is not None:
         # 予測フォームと結果の表示
         from models import show_prediction_form_and_results
         show_prediction_form_and_results(filtered_df)
-
+    
+    elif selected_tab == '四半期推移':
+        # 四半期推移タブの内容
+        show_quarterly_price_trends(api_key, prefecture_code, city_code, year=year)
     # データのダウンロード機能
     st.header('データのダウンロード')
     
