@@ -133,6 +133,8 @@ def format_stats_value(value, is_price=True):
     
     return str(value)
 
+# utils.py 内の generate_summary_report 関数の改善部分
+
 def generate_summary_report(df):
     """データの要約レポートを生成"""
     if df is None or df.empty:
@@ -167,6 +169,15 @@ def generate_summary_report(df):
         # 四分位数も追加
         report += f"- 第1四分位数 (25%): {df['TradePrice'].quantile(0.25)/10000:,.1f}万円\n"
         report += f"- 第3四分位数 (75%): {df['TradePrice'].quantile(0.75)/10000:,.1f}万円\n"
+        
+        # 単価の基本統計（あれば）
+        if 'PricePerSquareMeter' in df.columns:
+            valid_unit_price = df['PricePerSquareMeter'].dropna()
+            if not valid_unit_price.empty:
+                report += f"\n### 平米単価の統計\n"
+                report += f"- 平均単価: {valid_unit_price.mean():,.1f}万円/㎡\n"
+                report += f"- 中央値: {valid_unit_price.median():,.1f}万円/㎡\n"
+                report += f"- 標準偏差: {valid_unit_price.std():,.1f}万円/㎡\n"
     
     # 物件タイプ別の分布
     if 'Type' in df.columns:
@@ -199,6 +210,7 @@ def generate_summary_report(df):
     if 'PriceBin' in df.columns:
         report += f"\n## 価格帯別の分布\n"
         price_bin_counts = df['PriceBin'].value_counts().sort_index()
+        
         for bin_name, count in price_bin_counts.items():
             percentage = 100 * count / len(df)
             report += f"- {bin_name}: {count}件 ({percentage:.1f}%)\n"
@@ -223,7 +235,7 @@ def generate_summary_report(df):
             report += "|--------|----------|--------|--------|--------|------|\n"
             
             for _, row in district_price.tail(5).iterrows():
-                report += f"| {row['DistrictName']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} | {row['min']/10000:,.1f} | {row['max']/10000:,.1f} | {row['count']} |\n"
+                report += f"| {row['DistrictName']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} | {row['min']/10000:,.1f} | {row['max']/10000:,.1f} | {row['count']:,} |\n"
     
     # 築年数の統計（ある場合）
     if 'BuildingAge' in df.columns:
@@ -249,23 +261,6 @@ def generate_summary_report(df):
             for _, row in age_stats.iterrows():
                 if not pd.isna(row['AgeGroup']):
                     report += f"| {row['AgeGroup']} | {row['count']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} | {row['min']/10000:,.1f} | {row['max']/10000:,.1f} |\n"
-    
-    # 改装状況別の統計（ある場合）
-    if 'Renovation' in df.columns and 'TradePrice' in df.columns:
-        # NaNや空白を「不明」に置き換え
-        df_renovation = df.copy()
-        df_renovation['Renovation'] = df_renovation['Renovation'].fillna('不明')
-        df_renovation.loc[df_renovation['Renovation'] == '', 'Renovation'] = '不明'
-        
-        renovation_stats = df_renovation.groupby('Renovation')['TradePrice'].agg(['count', 'mean', 'median']).reset_index()
-        
-        if len(renovation_stats) > 0:
-            report += f"\n## 改装状況別の価格統計\n"
-            report += "| 改装状況 | 件数 | 平均価格（万円） | 中央値（万円） |\n"
-            report += "|----------|------|-----------------|---------------|\n"
-            
-            for _, row in renovation_stats.iterrows():
-                report += f"| {row['Renovation']} | {row['count']} | {row['mean']/10000:,.1f} | {row['median']/10000:,.1f} |\n"
     
     # まとめ（より詳細なものに拡張）
     report += f"\n## まとめ\n"
@@ -320,25 +315,8 @@ def generate_summary_report(df):
             second_percent = 100 * df['Type'].value_counts().iloc[1] / len(df)
             type_comment = f" 物件タイプは{most_common_type}が{type_percent:.1f}%、{second_type}が{second_percent:.1f}%と多様な構成になっています。"
     
-    # 総合的なまとめ文
-    summary = f"対象エリア（{municipality if 'Municipality' in df.columns else ''}）は{price_comment}の取引が中心です。{type_comment}{district_comment}{age_comment}"
-    
-    # 改装状況に関するコメント（あれば）
-    if 'Renovation' in df.columns and 'TradePrice' in df.columns:
-        # NaNや空白を「不明」に置き換え
-        df_renovation = df.copy()
-        df_renovation['Renovation'] = df_renovation['Renovation'].fillna('不明')
-        df_renovation.loc[df_renovation['Renovation'] == '', 'Renovation'] = '不明'
-        
-        renovation_prices = df_renovation.groupby('Renovation')['TradePrice'].mean()
-        if len(renovation_prices) > 1 and '改装済' in renovation_prices and ('未改装' in renovation_prices or '不明' in renovation_prices):
-            # 「未改装」があれば「未改装」と比較、なければ「不明」と比較
-            compare_to = '未改装' if '未改装' in renovation_prices else '不明'
-            price_diff = renovation_prices['改装済'] / renovation_prices[compare_to] - 1
-            if price_diff > 0.2:
-                summary += f" また、改装済物件は{compare_to}物件と比較して約{price_diff*100:.0f}%高い価格で取引される傾向があります。"
-    
-    # 取引動向（期間データがある場合）
+    # 期間のトレンド情報
+    trend_comment = ""
     if 'Period' in df.columns and 'TradePrice' in df.columns and len(df['Period'].unique()) > 1:
         period_trends = df.groupby('Period')['TradePrice'].mean().sort_index()
         if len(period_trends) > 1:
@@ -347,11 +325,18 @@ def generate_summary_report(df):
             price_change = (period_trends.iloc[-1] / period_trends.iloc[0] - 1) * 100
             
             if abs(price_change) < 5:
-                summary += f" {first_period}から{last_period}にかけての価格変動は小さく、市場は比較的安定しています。"
+                trend_comment = f" {first_period}から{last_period}にかけての価格変動は小さく、市場は比較的安定しています。"
             elif price_change > 0:
-                summary += f" {first_period}から{last_period}にかけて平均価格は約{price_change:.1f}%上昇しており、上昇トレンドが見られます。"
+                trend_comment = f" {first_period}から{last_period}にかけて平均価格は約{price_change:.1f}%上昇しており、上昇トレンドが見られます。"
             else:
-                summary += f" {first_period}から{last_period}にかけて平均価格は約{abs(price_change):.1f}%下落しており、下落トレンドが見られます。"
+                trend_comment = f" {first_period}から{last_period}にかけて平均価格は約{abs(price_change):.1f}%下落しており、下落トレンドが見られます。"
+    
+    # 総合的なまとめ文
+    if 'Municipality' in df.columns:
+        municipality = df['Municipality'].iloc[0] if not df['Municipality'].isna().all() else "対象エリア"
+        summary = f"{municipality}は{price_comment}の取引が中心です。{type_comment}{district_comment}{age_comment}{trend_comment}"
+    else:
+        summary = f"対象エリアは{price_comment}の取引が中心です。{type_comment}{district_comment}{age_comment}{trend_comment}"
     
     report += summary
     

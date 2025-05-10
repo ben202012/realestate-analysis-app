@@ -14,17 +14,76 @@ from visualizers import (
     plot_district_prices, plot_price_vs_building_age, plot_price_pie_chart,
     plot_heatmap, plot_time_trend, plot_price_per_sqm
 )
-from models import train_price_prediction_model, show_feature_importance, predict_price
+from models import train_price_prediction_model, show_feature_importance, show_prediction_form_and_results
 from utils import get_prefecture_dict, get_city_options, format_price, filter_dataframe, generate_summary_report
 from price_trends import show_quarterly_price_trends
 
 # タブ選択の状態を保持するための関数
-def train_model_on_click(df, features):
+# app.pyファイル内のtrain_model_on_click関数の更新
+def train_model_on_click(df, features, model_type='auto'):
+    """
+    モデル構築ボタンクリック時に実行される関数
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        学習データ
+    features : list
+        使用する特徴量のリスト
+    model_type : str
+        使用するモデルの種類
+    """
     with st.spinner('モデルを構築中...'):
-        model, mse, r2 = train_price_prediction_model(df, features)
+        # 高度なオプションがある場合は取得
+        advanced_options = st.session_state.get('model_advanced_options', {})
+        
+        # デバッグモードの確認
+        debug_mode = st.session_state.get('debug_mode', False)
+        
+        if debug_mode and advanced_options:
+            st.write("高度なオプション:", advanced_options)
+        
+        # 学習データのサンプル数を表示
+        if debug_mode:
+            st.write(f"学習データのサンプル数: {len(df)}")
+            st.write(f"使用する特徴量: {features}")
+            st.write(f"モデルタイプ: {model_type}")
+        
+        # データ数が少ない場合は警告
+        if len(df) < 50:
+            st.warning(f"学習データが少ないため（{len(df)}件）、モデルの精度が低くなる可能性があります。可能であればより多くのデータを取得してください。")
+        
+        # モデルの訓練
+        model, mse, r2 = train_price_prediction_model(df, features, model_type)
+        
+        # 訓練結果の保存
         if model is not None:
             st.session_state['model_r2'] = r2
             st.session_state['model_mse'] = mse
+            st.session_state['model_type'] = model_type
+            
+            # 特徴量の重要度を表示
+            if hasattr(model, 'feature_importances_') or st.session_state.get('is_ensemble', False):
+                st.subheader("特徴量の重要度")
+                importance_df = show_feature_importance(model, st.session_state['model_features'])
+                
+                # 重要度の低い特徴量があれば警告
+                if importance_df is not None and len(importance_df) > 3:
+                    # 重要度が低い特徴量（全体の5%未満）を検出
+                    low_importance = importance_df[importance_df['重要度'] < 0.05]
+                    if not low_importance.empty:
+                        st.info(f"以下の特徴量は重要度が低いため（5%未満）、次回のモデル構築時に除外を検討してください: {', '.join(low_importance['特徴量'].tolist())}")
+        else:
+            st.error("モデルの構築に失敗しました。データを確認してください。")
+            
+            # エラーの可能性がある場合の追加情報
+            if len(features) == 0:
+                st.error("特徴量が選択されていません。少なくとも1つ以上の特徴量を選択してください。")
+            elif len(df) < 20:
+                st.error("データ数が不足しています。モデル構築には少なくとも20件以上のデータが必要です。")
+            
+            # 解決策の提案
+            st.info("解決策: 別の地域を選択する、より多くのデータを取得する、または異常値や欠損値の多い特徴量を除外してください。")
 
 # ページ設定
 st.set_page_config(
@@ -213,7 +272,64 @@ if 'data' in st.session_state:
             max_value=age_max,
             value=(age_min, age_max)
         )
-    
+    # サイドバーに外れ値処理設定を追加
+    st.sidebar.header('データ処理設定')
+    with st.sidebar.expander("外れ値処理の設定", expanded=False):
+        # 外れ値除去を使用するかどうか
+        use_outlier_removal = st.checkbox(
+            "外れ値処理を有効にする", 
+            value=True,
+            help="外れ値（異常に高い/低い価格など）を除外します"
+        )
+        st.session_state['use_outlier_removal'] = use_outlier_removal
+        
+        if use_outlier_removal:
+            # 外れ値検出方法
+            outlier_method = st.selectbox(
+                "検出方法",
+                options=["iqr", "zscore", "dbscan"],
+                format_func=lambda x: {
+                    "iqr": "IQR法（四分位範囲法）",
+                    "zscore": "Z-score法（標準偏差）",
+                    "dbscan": "DBSCAN法（クラスタリング）"
+                }.get(x, x),
+                help="外れ値を検出するアルゴリズムを選択します"
+            )
+            st.session_state['outlier_method'] = outlier_method
+            
+            # 閾値の設定
+            if outlier_method == "iqr":
+                threshold = st.slider(
+                    "IQR倍数", 
+                    min_value=1.0, 
+                    max_value=3.0, 
+                    value=1.5, 
+                    step=0.1,
+                    help="大きいほど外れ値として判断される範囲が広くなります"
+                )
+            elif outlier_method == "zscore":
+                threshold = st.slider(
+                    "Z-score閾値", 
+                    min_value=2.0, 
+                    max_value=5.0, 
+                    value=3.0, 
+                    step=0.1,
+                    help="大きいほど外れ値として判断される範囲が狭くなります"
+                )
+            else:  # dbscan
+                threshold = st.slider(
+                    "DBSCAN閾値", 
+                    min_value=0.1, 
+                    max_value=1.0, 
+                    value=0.5, 
+                    step=0.1,
+                    help="クラスタリングの距離パラメータです"
+                )
+            
+            st.session_state['outlier_threshold'] = threshold
+
+
+
     # フィルタリング適用
     filtered_df = filter_dataframe(df, filters)
     
@@ -350,31 +466,165 @@ if 'data' in st.session_state and filtered_df is not None:
 
     elif selected_tab == '価格予測':
         st.header('価格予測モデル')
-        st.write('機械学習を使った簡易的な価格予測モデルを構築します。')
+        st.write('人工知能（機械学習）を使用した価格予測モデルを構築します。')
         
         # 特徴量選択
-        available_features = ['Area', 'BuildingAge', 'Type', 'Renovation']
+        available_features = ['Area', 'BuildingAge', 'Type', 'Renovation', 'Structure', 'DistrictName']
+        # データに存在する特徴量のみを表示
+        available_features = [f for f in available_features if f in filtered_df.columns]
+        
         selected_features = st.multiselect(
             '使用する特徴量を選択',
-            options=[f for f in available_features if f in filtered_df.columns],
-            default=[f for f in ['Area', 'BuildingAge', 'Type'] if f in filtered_df.columns]
+            options=available_features,
+            default=[f for f in ['Area', 'BuildingAge', 'Type'] if f in available_features]
         )
+        
+        # モデルタイプの選択
+        col1, col2 = st.columns(2)
+        with col1:
+            model_type = st.selectbox(
+                "モデルタイプ",
+                options=["auto", "rf", "gbm", "xgb", "lgb", "ensemble"],
+                format_func=lambda x: {
+                    "auto": "自動選択（推奨）", 
+                    "rf": "ランダムフォレスト", 
+                    "gbm": "勾配ブースティング", 
+                    "xgb": "XGBoost", 
+                    "lgb": "LightGBM", 
+                    "ensemble": "アンサンブル学習"
+                }.get(x, x),
+                index=0,
+                help="自動選択では複数のモデルをテストして最適なものを選びます。アンサンブル学習は複数のモデルを組み合わせて精度を向上させます。"
+            )
+        
+        with col2:
+            advanced_options = st.checkbox("高度なオプションを表示", value=False)
+        
+        # 高度なオプション
+        if advanced_options:
+            with st.expander("高度なモデル設定"):
+                # 交差検証のfold数
+                cv_folds = st.slider(
+                    "交差検証の分割数", 
+                    min_value=3, 
+                    max_value=10, 
+                    value=5, 
+                    help="交差検証はモデルの汎化性能を評価するためのテクニックです。大きい数を選ぶとより信頼性の高い評価ができますが、計算時間が長くなります。"
+                )
+                
+                # テストデータの割合
+                test_size = st.slider(
+                    "テストデータの割合", 
+                    min_value=0.1, 
+                    max_value=0.5, 
+                    value=0.2, 
+                    step=0.05,
+                    help="モデル評価に使用するデータの割合です。通常は0.2（20%）程度が適切です。"
+                )
+                
+                # ハイパーパラメータチューニング
+                hyperparameter_tuning = st.checkbox(
+                    "ハイパーパラメータチューニングを実行", 
+                    value=True,
+                    help="モデルの最適なパラメータを自動的に探索します。計算時間が長くなる場合があります。"
+                )
+                
+                st.session_state['model_advanced_options'] = {
+                    'cv_folds': cv_folds,
+                    'test_size': test_size,
+                    'hyperparameter_tuning': hyperparameter_tuning
+                }
         
         # フォームを使用してモデル構築ボタンをグループ化
         with st.form(key='model_build_form'):
             submit_build = st.form_submit_button('モデル構築')
             
         if submit_build and len(selected_features) > 0:
-            train_model_on_click(filtered_df, selected_features)
+            with st.spinner(f'選択したモデル（{model_type}）を構築中... これには数分かかる場合があります'):
+                # モデル構築関数を呼び出し
+                train_model_on_click(filtered_df, selected_features, model_type=model_type)
+                
+                # 評価指標を表示
+                if 'model_r2' in st.session_state:
+                    col1, col2, col3 = st.columns(3)
+                    
+                    # R²スコア
+                    r2 = st.session_state['model_r2']
+                    r2_color = 'normal'
+                    if r2 > 0.8:
+                        r2_color = 'good'
+                    elif r2 < 0.5:
+                        r2_color = 'off'
+                    col1.metric("決定係数 (R²)", f"{r2:.3f}", delta_color=r2_color)
+                    
+                    # RMSE
+                    rmse = st.session_state.get('model_rmse', np.sqrt(st.session_state['model_mse']))
+                    # 平均価格に対するRMSEの割合
+                    avg_price = filtered_df['TradePrice'].mean()
+                    rmse_ratio = rmse / avg_price
+                    rmse_status = f"平均価格の{rmse_ratio:.1%}"
+                    rmse_color = 'normal'
+                    if rmse_ratio < 0.15:
+                        rmse_color = 'good'
+                    elif rmse_ratio > 0.3:
+                        rmse_color = 'off'
+                    col2.metric("RMSE", f"{rmse:,.0f}", rmse_status, delta_color=rmse_color)
+                    
+                    # MAE
+                    mae = st.session_state.get('model_mae', 0)
+                    col3.metric("MAE", f"{mae:,.0f}")
+                    
+                    # モデルタイプの表示
+                    if st.session_state.get('is_ensemble', False):
+                        st.success("アンサンブルモデル（複数のアルゴリズムの組み合わせ）を使用しています。より精度の高い予測が可能です。")
+                    
+                    # モデル品質の評価
+                    model_quality = ""
+                    if r2 > 0.85:
+                        model_quality = "非常に高い（R² > 0.85）"
+                        st.success(f"モデルの品質: {model_quality}")
+                    elif r2 > 0.75:
+                        model_quality = "良好（R² > 0.75）"
+                        st.success(f"モデルの品質: {model_quality}")
+                    elif r2 > 0.6:
+                        model_quality = "許容範囲内（R² > 0.6）"
+                        st.info(f"モデルの品質: {model_quality}")
+                    elif r2 > 0.5:
+                        model_quality = "限定的（R² > 0.5）"
+                        st.warning(f"モデルの品質: {model_quality} - 特徴量の追加をご検討ください")
+                    else:
+                        model_quality = "不十分（R² < 0.5）"
+                        st.error(f"モデルの品質: {model_quality} - より多くの特徴量やデータが必要です")
         
-        # 特徴量の重要度
-        if 'prediction_model' in st.session_state and 'model_features' in st.session_state:
-            show_feature_importance(st.session_state['prediction_model'], st.session_state['model_features'])
+        # モデル構築後の予測フォーム表示
+        if 'prediction_model' in st.session_state:
+            # 予測フォームと結果を表示
+            show_prediction_form_and_results(filtered_df)    
         
-        # 予測フォームと結果の表示
-        from models import show_prediction_form_and_results
-        show_prediction_form_and_results(filtered_df)
-    
+
+            # 地域特徴量の設定
+            with st.sidebar.expander("地域特徴量の設定", expanded=False):
+                use_district_features = st.checkbox(
+                    "地域特徴量を使用する", 
+                    value=True,
+                    help="地名による特徴抽出と地域クラスタリングを行います"
+                )
+                st.session_state['use_district_features'] = use_district_features
+                
+                if use_district_features:
+                    # 地域特徴量の詳細設定
+                    district_feature_importance = st.slider(
+                        "地域特徴量の重要度", 
+                        min_value=1, 
+                        max_value=10, 
+                        value=5,
+                        help="モデルにおける地域特徴量の重みづけを調整します（値が大きいほど地域の影響が強くなります）"
+                    )
+                    st.session_state['district_feature_importance'] = district_feature_importance
+
+
+
+
     elif selected_tab == '四半期推移':
         # 四半期推移タブの内容
         show_quarterly_price_trends(api_key, prefecture_code, city_code, year=year)
